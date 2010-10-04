@@ -1,0 +1,111 @@
+<script>
+// it's experimental, so this may change
+var omnibox = chrome.experimental.omnibox;
+
+// returns tabs (this) that match text
+function matches(text) {
+  if (!this.reduce || !text)
+    return [];
+  // use helper function to get two arrays for better ordering
+  // Function.prototype.bind ftw, yo!
+  var arrs = this.reduce(matcher.bind(text.split(' ')), [[], []]);
+  return arrs[0].concat(arrs[1]);
+}
+
+function matcher(arrs, tab) {
+  var url = decodeURIComponent(tab.url).toLowerCase();
+  var title = tab.title.toLowerCase();
+  // add to first array if it matches at beginning of words
+  if (this.every(function(word) {
+    // this could be made more robust
+    var regex = new RegExp('(^|\\W)' + word);
+    return regex.test(url) || regex.test(title);
+  }))
+    arrs[0].push(tab);
+  // add to second array if it simply matches by substring
+  else if (this.every(function(word) {
+    return ~url.indexOf(word) || ~title.indexOf(word);
+  }))
+    arrs[1].push(tab);
+  return arrs;
+}
+
+omnibox.onInputChanged.addListener(function(text, suggest) {
+  text = text.toLowerCase().replace(/\W+/g, ' ').trim();
+  if (!text)
+    return;
+
+  chrome.tabs.getAllInWindow(null, function(tabs) {
+    suggest(matches.call(tabs, text).map(function(tab) {
+      // format the url and description omnibox-style
+      var url = decodeURIComponent(tab.url);
+      if (!url.indexOf('http://'))
+        url = url.slice(7);
+      var desc = url + ' - ' + tab.title;
+
+      // turn the title into an array to mark the matched substrings,
+      // then transform that into valid descriptionStyles
+      var title = tab.title.toLowerCase();
+      var start = url.length + 3;
+      var dim = 1;
+      var styles = text.split(' ').reduce(function(arr, word) {
+        var a, b = word.length, i = 0;
+        while (~(a = title.indexOf(word, i)))
+          for (i = a; i < a + b; i++)
+            // mark the matched character by replacing it with 0
+            arr[i] = 0;
+        return arr;
+      }, title.split('')).reduce(function(arr, char, i) {
+        if (!char && dim)
+          arr.push(omnibox.styleMatch(start + i)), dim = 0;
+        else if (char && !dim)
+          arr.push(omnibox.styleDim(start + i)), dim = 1;
+        return arr;
+      }, [omnibox.styleUrl(0), omnibox.styleDim(url.length)]);
+
+      return {
+        content: url,
+        description: desc,
+        descriptionStyles: styles
+      };
+    }));
+  });
+});
+
+omnibox.onInputEntered.addListener(function(url) {
+  var URL = url.indexOf('http://') && !/^[A-Za-z]+:/.test(url)
+              ? 'http://' + url : url;
+  url = url.toLowerCase().replace(/\W+/g, ' ').trim();
+  if (!url)
+    return;
+
+  chrome.tabs.getSelected(null, function(selected) {
+
+    function switchTo(tab) {
+      if (tab.selected) return;
+      chrome.tabs.update(tab.id, { selected: true }, function() {
+        // if the selected tab was the new tab page,
+        // assume that it was blank, and close it!
+        if (selected.url == 'chrome://newtab/')
+          chrome.tabs.remove(selected.id);
+      });
+    }
+
+    if (selected.url == URL)
+      return;
+
+    chrome.tabs.getAllInWindow(null, function(tabs) {
+      tabs.some(function(tab) {
+        // if entered url exactly matches an existing tab's, switch to it!
+        if (tab.url == URL)
+          return switchTo(tab), true;
+      }) || matches.call(tabs, url).some(function(tab) {
+        // otherwise, we need to use the same algorithm as before,
+        // and switch to the first match, if one exists
+        return switchTo(tab), true;
+      });
+    });
+
+  });
+});
+</script>

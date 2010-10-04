@@ -1,9 +1,6 @@
-Tab Menu is an extension for Google Chrome.
+Switch to tab is an extension for Google Chrome.
 
-The icon used in Tab Menu was provided by
-<http://wefunction.com/2008/07/function-free-icon-set>.
-
-Tab Menu's license is as follows:
+Switch to tab's license is as follows:
 
 Copyright (c) 2010 Frank Yan, <http://frankyan.com>
 
