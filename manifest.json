@@ -1,7 +1,7 @@
 {
-  "name": "Switch to tab",
+  "name": "Switch to Tab",
   "description": "Use the omnibox to search your tabs!",
-  "version": "2",
+  "version": "3",
   "permissions": ["tabs"],
   "omnibox": {
     "keyword": "sw"
