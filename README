@@ -1,8 +1,5 @@
-'Switch to tab' is the result of playing around with Chromium's experimental
-omnibox API.
+"Switch to Tab" allows you to quickly search your open tabs and switch between them using the omnibox.
 
-Enter "sw<tab>" followed by a search term to begin using Switch to Tab. You can
-enter multiple keywords separated by space.
+Enter "sw<tab>" followed by a search term to begin using Switch to Tab. You can enter multiple space-separated keywords.
 
-Upon pressing enter, the extension will select the first match and switch to
-that tab, so one need not type press down if the first match is desired.
+Shortcut: If you press enter without selecting a match, the extension will select the first one (if available).
