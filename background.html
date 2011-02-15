@@ -1,33 +1,86 @@
 <script>
-// it's experimental, so this may change
-var omnibox = chrome.experimental.omnibox;
+var omnibox = chrome.omnibox;
+var topMatch;
 
-// returns tabs (this) that match text
-function matches(text) {
-  if (!this.reduce || !text)
-    return [];
-  // use helper function to get two arrays for better ordering
-  // Function.prototype.bind ftw, yo!
-  var arrs = this.reduce(matcher.bind(text.split(' ')), [[], []]);
-  return arrs[0].concat(arrs[1]);
+function escape(text) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function matcher(arrs, tab) {
-  var url = decodeURIComponent(tab.url).toLowerCase();
-  var title = tab.title.toLowerCase();
-  // add to first array if it matches at beginning of words
-  if (this.every(function(word) {
-    // this could be made more robust
-    var regex = new RegExp('(^|\\W)' + word);
-    return regex.test(url) || regex.test(title);
-  }))
-    arrs[0].push(tab);
-  // add to second array if it simply matches by substring
-  else if (this.every(function(word) {
-    return ~url.indexOf(word) || ~title.indexOf(word);
-  }))
-    arrs[1].push(tab);
-  return arrs;
+function escapeRegexp(text) {
+  var specialChars = [
+    '\\',
+    '[',
+    ']',
+    '(',
+    ')',
+    '|',
+    '.',
+    '+',
+    '?',
+    '{',
+    '}',
+    '-'
+  ];
+
+  return text.split('').map(function(char) {
+    if (specialChars.indexOf(char) > -1)
+      return '\\' + char;
+    else
+      return char;
+  }).join('');
+}
+
+function parseMatches(text, search) {
+  var terms = escapeRegexp(search).split(/\s+/g);
+  var termMatchCounts = [];
+  terms.forEach(function() { termMatchCounts.push(0); });
+  var re = new RegExp("(" + terms.join(")|(") + ")", "ig");
+  var result = [];
+  var lastIndex = 0;
+  var match;
+  while (match = re.exec(text)) {
+    result.push({
+      match: false,
+      text: escape(text.substring(lastIndex, match.index))
+    });
+
+    lastIndex = match.index + match[0].length;
+    result.push({
+      match: true,
+      text: escape(text.substring(match.index, lastIndex))
+    });
+
+    for (var i = 1; i < match.length; i++) {
+      if (match[i])
+        termMatchCounts[i - 1]++;
+    }
+  }
+
+  // If any term found no matches, then we don't have a match.
+  if (termMatchCounts.indexOf(0) > -1) {
+    return [
+      {
+        match: false,
+        text: escape(text)
+      }
+    ];
+  }
+
+  result.push({
+    match: false,
+    text: escape(text.substring(lastIndex))
+  });
+
+  return result;
+}
+
+function formatMatches(parsed) {
+  return parsed.reduce(function(s, piece) {
+    if (piece.match)
+      return s + "<match>" + piece.text + "</match>";
+    else
+      return s + piece.text;
+  }, "");
 }
 
 omnibox.onInputChanged.addListener(function(text, suggest) {
@@ -35,77 +88,73 @@ omnibox.onInputChanged.addListener(function(text, suggest) {
   if (!text)
     return;
 
-  chrome.tabs.getAllInWindow(null, function(tabs) {
-    suggest(matches.call(tabs, text).map(function(tab) {
-      // format the url and description omnibox-style
-      var url = decodeURIComponent(tab.url);
-      if (!url.indexOf('http://'))
-        url = url.slice(7);
-      var desc = url + ' - ' + tab.title;
+  chrome.windows.getAll({populate: true}, function(windows) {
+    topMatch = -1;
 
-      // turn the title into an array to mark the matched substrings,
-      // then transform that into valid descriptionStyles
-      var title = tab.title.toLowerCase();
-      var start = url.length + 3;
-      var dim = 1;
-      var styles = text.split(' ').reduce(function(arr, word) {
-        var a, b = word.length, i = 0;
-        while (~(a = title.indexOf(word, i)))
-          for (i = a; i < a + b; i++)
-            // mark the matched character by replacing it with 0
-            arr[i] = 0;
-        return arr;
-      }, title.split('')).reduce(function(arr, char, i) {
-        if (!char && dim)
-          arr.push(omnibox.styleMatch(start + i)), dim = 0;
-        else if (char && !dim)
-          arr.push(omnibox.styleDim(start + i)), dim = 1;
-        return arr;
-      }, [omnibox.styleUrl(0), omnibox.styleDim(url.length)]);
+    var tabs = windows.reduce(function(arr, win) {
+      return arr.concat(win.tabs);
+    }, []);
 
+    var suggestions = tabs.map(function(tab) {
       return {
-        content: url,
-        description: desc,
-        descriptionStyles: styles
+        tab: tab,
+        title: parseMatches(tab.title, text),
+        url: parseMatches(tab.url, text)
       };
-    }));
+    }).filter(function(item) {
+      if (item.title.length > 1 || item.url.length > 1) {
+        if (topMatch == -1)
+          topMatch = item.tab.id;
+        return true;
+      } else {
+        return false;
+      }
+    }).map(function(item) {
+      return {
+        content: item.tab.title + ' - ' + item.tab.url + '#' + item.tab.id,
+        description: formatMatches(item.title) + ' - ' +
+                     '<url>' + formatMatches(item.url) + '</url>'
+      };
+    });
+
+    suggest(suggestions);
   });
 });
 
 omnibox.onInputEntered.addListener(function(url) {
-  var URL = url.indexOf('http://') && !/^[A-Za-z]+:/.test(url)
-              ? 'http://' + url : url;
-  url = url.toLowerCase().replace(/\W+/g, ' ').trim();
-  if (!url)
+  var tabId = url.match(/#(\d+)$/);
+  if (tabId)
+    tabId = parseInt(tabId[1]);
+  else if (topMatch != -1)
+    tabId = topMatch;
+  else
     return;
 
   chrome.tabs.getSelected(null, function(selected) {
+    // if the selected tab was the new tab page,
+    // assume that it was blank, and close it!
+    if (selected.url == 'chrome://newtab/')
+      chrome.tabs.remove(selected.id);
+  });
 
-    function switchTo(tab) {
-      if (tab.selected) return;
-      chrome.tabs.update(tab.id, { selected: true }, function() {
-        // if the selected tab was the new tab page,
-        // assume that it was blank, and close it!
-        if (selected.url == 'chrome://newtab/')
-          chrome.tabs.remove(selected.id);
+  chrome.tabs.get(tabId, function(tab) {
+    if (tab && !tab.selected) {
+      chrome.tabs.update(tabId, {
+        selected: true
       });
     }
 
-    if (selected.url == URL)
-      return;
-
-    chrome.tabs.getAllInWindow(null, function(tabs) {
-      tabs.some(function(tab) {
-        // if entered url exactly matches an existing tab's, switch to it!
-        if (tab.url == URL)
-          return switchTo(tab), true;
-      }) || matches.call(tabs, url).some(function(tab) {
-        // otherwise, we need to use the same algorithm as before,
-        // and switch to the first match, if one exists
-        return switchTo(tab), true;
-      });
+    chrome.windows.get(tab.windowId, function(win) {
+      if (!window.focused) {
+        chrome.windows.update(tab.windowId, {
+          focused: true
+        });
+      }
     });
-
   });
+});
+
+omnibox.onInputCancelled.addListener(function() {
+  topMatch = -1;
 });
 </script>

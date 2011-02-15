@@ -2,7 +2,9 @@
   "name": "Switch to tab",
   "description": "Use the omnibox to search your tabs!",
   "version": "1",
-  "permissions": ["tabs", "experimental"],
-  "omnibox_keyword": "'",
+  "permissions": ["tabs"],
+  "omnibox": {
+    "keyword": "sw"
+  },
   "background_page": "background.html"
 }
